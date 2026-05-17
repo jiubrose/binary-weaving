@@ -2,70 +2,320 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Weave Binary Generator</title>
   <style>
-    body { font-family: Arial, Helvetica, sans-serif; padding: 18px; max-width: 900px; }
-    label { display:block; margin-top:10px; }
-    textarea { width:100%; height:100px; font-family:monospace; }
-    .controls { display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap; }
-    canvas { border:1px solid #ccc; margin-top:12px; image-rendering:pixelated; }
-    button { padding:6px 10px; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      padding: 16px;
+      max-width: 1000px;
+      margin: 0 auto;
+      background-color: #f5f5f5;
+      line-height: 1.6;
+    }
+
+    h2 {
+      margin-top: 24px;
+      margin-bottom: 16px;
+      color: #333;
+      font-size: 1.8rem;
+    }
+
+    h2:first-child {
+      margin-top: 0;
+    }
+
+    p {
+      color: #666;
+      margin-bottom: 12px;
+      font-size: 0.95rem;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      color: #333;
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    textarea, input[type="number"], input[type="text"], select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    textarea:focus, input:focus, select:focus {
+      outline: none;
+      border-color: #4CAF50;
+      box-shadow: 0 0 4px rgba(76, 175, 80, 0.2);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+      font-family: 'Courier New', monospace;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+      flex-wrap: wrap;
+    }
+
+    .controls label {
+      margin-top: 0;
+      margin-bottom: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .controls input[type="number"],
+    .controls select {
+      flex: 1;
+      margin-bottom: 0;
+    }
+
+    .controls input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    button {
+      padding: 10px 16px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.2s;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      background-color: #45a049;
+    }
+
+    button:active {
+      background-color: #3d8b40;
+    }
+
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    canvas {
+      border: 1px solid #ddd;
+      margin-top: 16px;
+      image-rendering: pixelated;
+      max-width: 100%;
+      height: auto;
+      display: block;
+      background-color: white;
+      border-radius: 4px;
+    }
+
+    video {
+      border: 1px solid #ddd;
+      max-width: 100%;
+      height: auto;
+      margin-top: 12px;
+      border-radius: 4px;
+      background-color: #000;
+      display: block;
+    }
+
+    #cameraContainer {
+      background-color: white;
+      padding: 12px;
+      border-radius: 4px;
+      margin-top: 12px;
+    }
+
+    .form-group {
+      background-color: white;
+      padding: 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    hr {
+      margin: 32px 0;
+      border: none;
+      border-top: 2px solid #ddd;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .button-group button {
+      flex: 1;
+      min-width: 120px;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 12px;
+      }
+
+      h2 {
+        font-size: 1.5rem;
+        margin-top: 20px;
+        margin-bottom: 12px;
+      }
+
+      .controls {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .button-group {
+        flex-direction: column;
+      }
+
+      .button-group button {
+        width: 100%;
+        min-width: auto;
+      }
+
+      label {
+        font-size: 0.9rem;
+      }
+
+      textarea, input, select {
+        font-size: 16px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 10px;
+      }
+
+      h2 {
+        font-size: 1.3rem;
+        margin-top: 16px;
+        margin-bottom: 10px;
+      }
+
+      label {
+        font-size: 0.85rem;
+      }
+
+      button {
+        padding: 9px 12px;
+        font-size: 13px;
+      }
+
+      textarea {
+        min-height: 70px;
+        font-size: 13px;
+      }
+
+      .controls label {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .controls input[type="number"],
+      .controls select {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
   <h2>Weave Binary Generator</h2>
-  <label>Message (text only)
-    <textarea id="message">Type your message you wish to preserve here...</textarea>
-  </label>
-
-  <div class="controls">
-    <label>Columns: <input id="cols" type="number" value="32" min="1" style="width:80px"></label>
-    <label>Cell size (px): <input id="cell" type="number" value="8" min="1" style="width:80px"></label>
-    <label>Bits/char: 
-      <select id="bits">
-        <option value="8" selected>8</option>
-        <option value="7">7</option>
-      </select>
+  
+  <div class="form-group">
+    <label>Message (text only)
+      <textarea id="message">Type your message you wish to preserve here...</textarea>
     </label>
-    <label><input id="invert" type="checkbox"> invert (1→white)</label>
-    <button id="gen">Generate</button>
-    <button id="download">Download PNG</button>
+
+    <div class="controls">
+      <label>Columns: <input id="cols" type="number" value="32" min="1"></label>
+      <label>Cell size (px): <input id="cell" type="number" value="8" min="1"></label>
+      <label>Bits/char: 
+        <select id="bits">
+          <option value="8" selected>8</option>
+          <option value="7">7</option>
+        </select>
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px;"><input id="invert" type="checkbox"> Invert (1→white)</label>
+    </div>
+
+    <div class="button-group">
+      <button id="gen">Generate</button>
+      <button id="download">Download PNG</button>
+    </div>
   </div>
 
   <canvas id="pattern"></canvas>
 
-  <hr style="margin: 40px 0;">
+  <hr>
 
   <h2>Weave Binary Scanner</h2>
   <p>Use your device's camera to scan a binary pattern and translate it back to text.</p>
   
-  <div class="controls">
-    <button id="startCamera">Start Camera</button>
-    <button id="capturePhoto" style="display:none;">Capture Photo</button>
-    <button id="stopCamera" style="display:none;">Stop Camera</button>
-    <label>Bits/char: 
-      <select id="scanBits">
-        <option value="8" selected>8</option>
-        <option value="7">7</option>
-      </select>
-    </label>
-    <label>Cell size (px): <input id="scanCell" type="number" value="8" min="1" style="width:80px"></label>
+  <div class="form-group">
+    <div class="controls">
+      <label>Bits/char: 
+        <select id="scanBits">
+          <option value="8" selected>8</option>
+          <option value="7">7</option>
+        </select>
+      </label>
+      <label>Cell size (px): <input id="scanCell" type="number" value="8" min="1"></label>
+    </div>
+
+    <div class="button-group">
+      <button id="startCamera">Start Camera</button>
+      <button id="capturePhoto" style="display:none;">Capture Photo</button>
+      <button id="stopCamera" style="display:none;">Stop Camera</button>
+    </div>
   </div>
 
-  <div id="cameraContainer" style="display:none; margin-top:12px;">
-    <video id="cameraFeed" style="border:1px solid #ccc; max-width:100%; height:auto;"></video>
+  <div id="cameraContainer" style="display:none;">
+    <video id="cameraFeed"></video>
     <canvas id="scanCanvas" style="display:none;"></canvas>
   </div>
 
-  <label style="margin-top:12px; display:block;">
-    Scanned Binary:
-    <textarea id="scannedBinary" readonly style="height:60px;"></textarea>
-  </label>
+  <div class="form-group" style="display:none;" id="resultsGroup">
+    <label>
+      Scanned Binary:
+      <textarea id="scannedBinary" readonly style="min-height:60px;"></textarea>
+    </label>
 
-  <label>
-    Decoded Text:
-    <textarea id="decodedText" readonly style="height:100px;"></textarea>
-  </label>
+    <label>
+      Decoded Text:
+      <textarea id="decodedText" readonly style="min-height:80px;"></textarea>
+    </label>
+  </div>
 
   <script>
     function textToBinary(text, bitsPerChar = 8) {
@@ -184,6 +434,7 @@
       const ctx = canvas.getContext('2d');
       const scanBinary = document.getElementById('scannedBinary');
       const decodedText = document.getElementById('decodedText');
+      const resultsGroup = document.getElementById('resultsGroup');
       const bits = parseInt(document.getElementById('scanBits').value);
       const cellSize = parseInt(document.getElementById('scanCell').value);
 
@@ -197,6 +448,7 @@
         scanBinary.value = extracted;
         const decoded = binaryToText(extracted, bits);
         decodedText.value = decoded || '(no valid text found)';
+        resultsGroup.style.display = 'block';
       }
     }
 
