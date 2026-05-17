@@ -299,13 +299,11 @@
   
   <div class="form-group">
     <div class="controls">
-      <label>Cell size (px): <input id="scanCell" type="number" value="16" min="1"></label>
     </div>
 
     <div class="button-group">
       <button id="startCamera">Start Camera</button>
-      <button id="capturePhoto" style="display:none;">Capture Photo</button>
-      <button id="stopCamera" style="display:none;">Stop Camera</button>
+      <button id="captureAndStop" style="display:none;">Capture & Scan</button>
     </div>
 
     <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #ddd;">
@@ -467,7 +465,7 @@
       const decodedText = document.getElementById('decodedText');
       const resultsGroup = document.getElementById('resultsGroup');
       const bits = 8; // Fixed to 8 bits
-      const cellSize = parseInt(document.getElementById('scanCell').value);
+      const cellSize = 16; // Fixed to 16px
 
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -481,40 +479,16 @@
         decodedText.value = decoded || '(no valid text found)';
         resultsGroup.style.display = 'block';
       }
+
+      // Automatically stop camera after capture
+      stopCameraStream();
     }
 
-    document.getElementById('startCamera').addEventListener('click', async () => {
+    function stopCameraStream() {
       const cameraContainer = document.getElementById('cameraContainer');
       const video = document.getElementById('cameraFeed');
       const startBtn = document.getElementById('startCamera');
-      const captureBtn = document.getElementById('capturePhoto');
-      const stopBtn = document.getElementById('stopCamera');
-
-      try {
-        videoStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
-        });
-        video.srcObject = videoStream;
-        video.play();
-        cameraContainer.style.display = 'block';
-        startBtn.style.display = 'none';
-        captureBtn.style.display = 'inline-block';
-        stopBtn.style.display = 'inline-block';
-      } catch (err) {
-        alert('Error accessing camera: ' + err.message);
-      }
-    });
-
-    document.getElementById('capturePhoto').addEventListener('click', () => {
-      processPhotoCapture();
-    });
-
-    document.getElementById('stopCamera').addEventListener('click', () => {
-      const cameraContainer = document.getElementById('cameraContainer');
-      const video = document.getElementById('cameraFeed');
-      const startBtn = document.getElementById('startCamera');
-      const captureBtn = document.getElementById('capturePhoto');
-      const stopBtn = document.getElementById('stopCamera');
+      const captureBtn = document.getElementById('captureAndStop');
 
       if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
@@ -525,7 +499,30 @@
       cameraContainer.style.display = 'none';
       startBtn.style.display = 'inline-block';
       captureBtn.style.display = 'none';
-      stopBtn.style.display = 'none';
+    }
+
+    document.getElementById('startCamera').addEventListener('click', async () => {
+      const cameraContainer = document.getElementById('cameraContainer');
+      const video = document.getElementById('cameraFeed');
+      const startBtn = document.getElementById('startCamera');
+      const captureBtn = document.getElementById('captureAndStop');
+
+      try {
+        videoStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = videoStream;
+        video.play();
+        cameraContainer.style.display = 'block';
+        startBtn.style.display = 'none';
+        captureBtn.style.display = 'inline-block';
+      } catch (err) {
+        alert('Error accessing camera: ' + err.message);
+      }
+    });
+
+    document.getElementById('captureAndStop').addEventListener('click', () => {
+      processPhotoCapture();
     });
 
     function processUploadedImage(file) {
@@ -539,7 +536,7 @@
           const decodedText = document.getElementById('decodedText');
           const resultsGroup = document.getElementById('resultsGroup');
           const bits = 8; // Fixed to 8 bits
-          const cellSize = parseInt(document.getElementById('scanCell').value);
+          const cellSize = 16; // Fixed to 16px
 
           canvas.width = img.width;
           canvas.height = img.height;
