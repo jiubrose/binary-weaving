@@ -4,11 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Binary Weaving Generator</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23000'/><rect x='10' y='10' width='35' height='35' fill='%23fff'/><rect x='55' y='10' width='35' height='35' fill='%23000'/><rect x='10' y='55' width='35' height='35' fill='%23000'/><rect x='55' y='55' width='35' height='35' fill='%23fff'/></svg>">
   <style>
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+      cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="%23000"/><rect x="4" y="4" width="12" height="12" fill="%23fff"/><rect x="16" y="4" width="12" height="12" fill="%23000"/><rect x="4" y="16" width="12" height="12" fill="%23000"/><rect x="16" y="16" width="12" height="12" fill="%23fff"/></svg>') 16 16, auto;
+    }
+
+    button:hover,
+    input:hover,
+    textarea:hover,
+    select:hover,
+    a:hover,
+    label:hover {
+      cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="%23fff"/><rect x="4" y="4" width="12" height="12" fill="%23000"/><rect x="16" y="4" width="12" height="12" fill="%23fff"/><rect x="4" y="16" width="12" height="12" fill="%23fff"/><rect x="16" y="16" width="12" height="12" fill="%23000"/></svg>') 16 16, auto;
     }
 
     body {
@@ -431,9 +442,9 @@
       const data = imageData.data;
       const width = imageData.width;
       const height = imageData.height;
-      const binary = [];
+      const cellBrightnesses = [];
 
-      // Process grid based on cell size
+      // First pass: collect brightness values for all cells
       for (let y = 0; y < height; y += cellSize) {
         for (let x = 0; x < width; x += cellSize) {
           // Get average brightness of cell
@@ -450,8 +461,34 @@
             }
           }
           brightness /= count;
-          // If darker than midpoint, it's a 1, else 0
-          binary.push(brightness < 128 ? '1' : '0');
+          cellBrightnesses.push(brightness);
+        }
+      }
+
+      // Calculate adaptive threshold using median and quartiles for better contrast
+      cellBrightnesses.sort((a, b) => a - b);
+      const mid = Math.floor(cellBrightnesses.length / 2);
+      const threshold = cellBrightnesses[mid];
+
+      // Second pass: convert to binary using adaptive threshold
+      const binary = [];
+      for (let y = 0; y < height; y += cellSize) {
+        for (let x = 0; x < width; x += cellSize) {
+          let brightness = 0;
+          let count = 0;
+          for (let dy = 0; dy < cellSize && y + dy < height; dy++) {
+            for (let dx = 0; dx < cellSize && x + dx < width; dx++) {
+              const idx = ((y + dy) * width + (x + dx)) * 4;
+              const r = data[idx];
+              const g = data[idx + 1];
+              const b = data[idx + 2];
+              brightness += (r + g + b) / 3;
+              count++;
+            }
+          }
+          brightness /= count;
+          // Use adaptive threshold for better detection
+          binary.push(brightness < threshold ? '1' : '0');
         }
       }
       return binary.join('');
