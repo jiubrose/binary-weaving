@@ -15,7 +15,7 @@
 <body>
   <h2>Weave Binary Generator</h2>
   <label>Message (text only)
-    <textarea id="message">Hello, world!</textarea>
+    <textarea id="message">Type your message you wish to preserve here...</textarea>
   </label>
 
   <div class="controls">
@@ -33,6 +33,38 @@
   </div>
 
   <canvas id="pattern"></canvas>
+
+  <hr style="margin: 40px 0;">
+
+  <h2>Weave Binary Scanner</h2>
+  <p>Use your device's camera to scan a binary pattern and translate it back to text.</p>
+  
+  <div class="controls">
+    <button id="startCamera">Start Camera</button>
+    <button id="stopCamera" style="display:none;">Stop Camera</button>
+    <label>Bits/char: 
+      <select id="scanBits">
+        <option value="8" selected>8</option>
+        <option value="7">7</option>
+      </select>
+    </label>
+    <label>Cell size (px): <input id="scanCell" type="number" value="8" min="1" style="width:80px"></label>
+  </div>
+
+  <div id="cameraContainer" style="display:none; margin-top:12px;">
+    <video id="cameraFeed" style="border:1px solid #ccc; max-width:100%; height:auto;"></video>
+    <canvas id="scanCanvas" style="display:none;"></canvas>
+  </div>
+
+  <label style="margin-top:12px; display:block;">
+    Scanned Binary:
+    <textarea id="scannedBinary" readonly style="height:60px;"></textarea>
+  </label>
+
+  <label>
+    Decoded Text:
+    <textarea id="decodedText" readonly style="height:100px;"></textarea>
+  </label>
 
   <script>
     function textToBinary(text, bitsPerChar = 8) {
@@ -97,6 +129,119 @@
 
     // auto-generate initial
     document.getElementById('gen').click();
+
+    // ==================== SCANNER SECTION ====================
+    let videoStream = null;
+    let scanningInterval = null;
+
+    function binaryToText(binary, bitsPerChar = 8) {
+      const text = [];
+      for (let i = 0; i < binary.length; i += bitsPerChar) {
+        const chunk = binary.slice(i, i + bitsPerChar);
+        if (chunk.length === bitsPerChar) {
+          const code = parseInt(chunk, 2);
+          if (code >= 0 && code <= 127) {
+            text.push(String.fromCharCode(code));
+          }
+        }
+      }
+      return text.join('');
+    }
+
+    function extractBinaryFromImage(imageData, cellSize) {
+      const data = imageData.data;
+      const width = imageData.width;
+      const height = imageData.height;
+      const binary = [];
+
+      // Process grid based on cell size
+      for (let y = 0; y < height; y += cellSize) {
+        for (let x = 0; x < width; x += cellSize) {
+          // Get average brightness of cell
+          let brightness = 0;
+          let count = 0;
+          for (let dy = 0; dy < cellSize && y + dy < height; dy++) {
+            for (let dx = 0; dx < cellSize && x + dx < width; dx++) {
+              const idx = ((y + dy) * width + (x + dx)) * 4;
+              const r = data[idx];
+              const g = data[idx + 1];
+              const b = data[idx + 2];
+              brightness += (r + g + b) / 3;
+              count++;
+            }
+          }
+          brightness /= count;
+          // If darker than midpoint, it's a 1, else 0
+          binary.push(brightness < 128 ? '1' : '0');
+        }
+      }
+      return binary.join('');
+    }
+
+    document.getElementById('startCamera').addEventListener('click', async () => {
+      const cameraContainer = document.getElementById('cameraContainer');
+      const video = document.getElementById('cameraFeed');
+      const startBtn = document.getElementById('startCamera');
+      const stopBtn = document.getElementById('stopCamera');
+
+      try {
+        videoStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = videoStream;
+        video.play();
+        cameraContainer.style.display = 'block';
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+
+        // Start scanning frames
+        const canvas = document.getElementById('scanCanvas');
+        const ctx = canvas.getContext('2d');
+        const scanBinary = document.getElementById('scannedBinary');
+        const decodedText = document.getElementById('decodedText');
+        const bits = parseInt(document.getElementById('scanBits').value);
+        const cellSize = parseInt(document.getElementById('scanCell').value);
+
+        scanningInterval = setInterval(() => {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const extracted = extractBinaryFromImage(imageData, cellSize);
+            
+            if (extracted.length > 0) {
+              scanBinary.value = extracted;
+              const decoded = binaryToText(extracted, bits);
+              decodedText.value = decoded || '(no valid text found)';
+            }
+          }
+        }, 500); // Scan every 500ms
+      } catch (err) {
+        alert('Error accessing camera: ' + err.message);
+      }
+    });
+
+    document.getElementById('stopCamera').addEventListener('click', () => {
+      const cameraContainer = document.getElementById('cameraContainer');
+      const video = document.getElementById('cameraFeed');
+      const startBtn = document.getElementById('startCamera');
+      const stopBtn = document.getElementById('stopCamera');
+
+      if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+      }
+      if (scanningInterval) {
+        clearInterval(scanningInterval);
+        scanningInterval = null;
+      }
+
+      video.srcObject = null;
+      cameraContainer.style.display = 'none';
+      startBtn.style.display = 'inline-block';
+      stopBtn.style.display = 'none';
+    });
   </script>
 </body>
 </html>
