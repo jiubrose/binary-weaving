@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Weave Binary Generator</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; padding: 18px; max-width: 900px; }
+    label { display:block; margin-top:10px; }
+    textarea { width:100%; height:100px; font-family:monospace; }
+    .controls { display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+    canvas { border:1px solid #ccc; margin-top:12px; image-rendering:pixelated; }
+    button { padding:6px 10px; }
+  </style>
+</head>
+<body>
+  <h2>Weave Binary Generator</h2>
+  <label>Message (text only)
+    <textarea id="message">Hello, world!</textarea>
+  </label>
+
+  <div class="controls">
+    <label>Columns: <input id="cols" type="number" value="32" min="1" style="width:80px"></label>
+    <label>Cell size (px): <input id="cell" type="number" value="8" min="1" style="width:80px"></label>
+    <label>Bits/char: 
+      <select id="bits">
+        <option value="8" selected>8</option>
+        <option value="7">7</option>
+      </select>
+    </label>
+    <label><input id="invert" type="checkbox"> invert (1→white)</label>
+    <button id="gen">Generate</button>
+    <button id="download">Download PNG</button>
+  </div>
+
+  <canvas id="pattern"></canvas>
+
+  <script>
+    function textToBinary(text, bitsPerChar = 8) {
+      const arr = [];
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        let b = code.toString(2);
+        if (b.length > bitsPerChar) b = b.slice(-bitsPerChar);
+        else b = b.padStart(bitsPerChar, '0');
+        arr.push(b);
+      }
+      return arr.join('');
+    }
+
+    function chunkString(str, size) {
+      const chunks = [];
+      for (let i = 0; i < str.length; i += size) chunks.push(str.slice(i, i + size));
+      return chunks;
+    }
+
+    function renderBinaryGrid(binary, cols, cellSize, invert=false) {
+      const rows = Math.ceil(binary.length / cols);
+      const canvas = document.getElementById('pattern');
+      canvas.width = cols * cellSize;
+      canvas.height = rows * cellSize;
+      const ctx = canvas.getContext('2d');
+
+      // Fill background white (or black if invert)
+      ctx.fillStyle = invert ? '#fff' : '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = 0; i < binary.length; i++) {
+        const bit = binary[i];
+        const x = (i % cols) * cellSize;
+        const y = Math.floor(i / cols) * cellSize;
+        const on = bit === '1';
+        // If invert checked, flip color mapping
+        ctx.fillStyle = (on ^ invert) ? '#000' : '#fff';
+        ctx.fillRect(x, y, cellSize, cellSize);
+      }
+    }
+
+    document.getElementById('gen').addEventListener('click', () => {
+      const msg = document.getElementById('message').value;
+      const cols = Math.max(1, parseInt(document.getElementById('cols').value) || 32);
+      const cell = Math.max(1, parseInt(document.getElementById('cell').value) || 8);
+      const bits = parseInt(document.getElementById('bits').value, 10) || 8;
+      const invert = document.getElementById('invert').checked;
+
+      const binary = textToBinary(msg, bits);
+      renderBinaryGrid(binary, cols, cell, invert);
+    });
+
+    document.getElementById('download').addEventListener('click', () => {
+      const canvas = document.getElementById('pattern');
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'weave.png';
+      a.click();
+    });
+
+    // auto-generate initial
+    document.getElementById('gen').click();
+  </script>
+</body>
+</html>
