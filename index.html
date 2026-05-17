@@ -41,6 +41,7 @@
   
   <div class="controls">
     <button id="startCamera">Start Camera</button>
+    <button id="capturePhoto" style="display:none;">Capture Photo</button>
     <button id="stopCamera" style="display:none;">Stop Camera</button>
     <label>Bits/char: 
       <select id="scanBits">
@@ -132,7 +133,6 @@
 
     // ==================== SCANNER SECTION ====================
     let videoStream = null;
-    let scanningInterval = null;
 
     function binaryToText(binary, bitsPerChar = 8) {
       const text = [];
@@ -178,10 +178,33 @@
       return binary.join('');
     }
 
+    function processPhotoCapture() {
+      const video = document.getElementById('cameraFeed');
+      const canvas = document.getElementById('scanCanvas');
+      const ctx = canvas.getContext('2d');
+      const scanBinary = document.getElementById('scannedBinary');
+      const decodedText = document.getElementById('decodedText');
+      const bits = parseInt(document.getElementById('scanBits').value);
+      const cellSize = parseInt(document.getElementById('scanCell').value);
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const extracted = extractBinaryFromImage(imageData, cellSize);
+      
+      if (extracted.length > 0) {
+        scanBinary.value = extracted;
+        const decoded = binaryToText(extracted, bits);
+        decodedText.value = decoded || '(no valid text found)';
+      }
+    }
+
     document.getElementById('startCamera').addEventListener('click', async () => {
       const cameraContainer = document.getElementById('cameraContainer');
       const video = document.getElementById('cameraFeed');
       const startBtn = document.getElementById('startCamera');
+      const captureBtn = document.getElementById('capturePhoto');
       const stopBtn = document.getElementById('stopCamera');
 
       try {
@@ -192,54 +215,33 @@
         video.play();
         cameraContainer.style.display = 'block';
         startBtn.style.display = 'none';
+        captureBtn.style.display = 'inline-block';
         stopBtn.style.display = 'inline-block';
-
-        // Start scanning frames
-        const canvas = document.getElementById('scanCanvas');
-        const ctx = canvas.getContext('2d');
-        const scanBinary = document.getElementById('scannedBinary');
-        const decodedText = document.getElementById('decodedText');
-        const bits = parseInt(document.getElementById('scanBits').value);
-        const cellSize = parseInt(document.getElementById('scanCell').value);
-
-        scanningInterval = setInterval(() => {
-          if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const extracted = extractBinaryFromImage(imageData, cellSize);
-            
-            if (extracted.length > 0) {
-              scanBinary.value = extracted;
-              const decoded = binaryToText(extracted, bits);
-              decodedText.value = decoded || '(no valid text found)';
-            }
-          }
-        }, 500); // Scan every 500ms
       } catch (err) {
         alert('Error accessing camera: ' + err.message);
       }
+    });
+
+    document.getElementById('capturePhoto').addEventListener('click', () => {
+      processPhotoCapture();
     });
 
     document.getElementById('stopCamera').addEventListener('click', () => {
       const cameraContainer = document.getElementById('cameraContainer');
       const video = document.getElementById('cameraFeed');
       const startBtn = document.getElementById('startCamera');
+      const captureBtn = document.getElementById('capturePhoto');
       const stopBtn = document.getElementById('stopCamera');
 
       if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
         videoStream = null;
       }
-      if (scanningInterval) {
-        clearInterval(scanningInterval);
-        scanningInterval = null;
-      }
 
       video.srcObject = null;
       cameraContainer.style.display = 'none';
       startBtn.style.display = 'inline-block';
+      captureBtn.style.display = 'none';
       stopBtn.style.display = 'none';
     });
   </script>
