@@ -77,6 +77,10 @@
       box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
     }
 
+    textarea::placeholder, input::placeholder {
+      color: #c7c7c7;
+    }
+
     textarea {
       resize: vertical;
       min-height: 80px;
@@ -289,7 +293,7 @@
   
   <div class="form-group">
     <label>Message (text only)
-      <textarea id="message">Type your message you wish to preserve here...</textarea>
+      <textarea id="message" placeholder="Type your message you wish to preserve here..."></textarea>
     </label>
 
     <div class="controls">
