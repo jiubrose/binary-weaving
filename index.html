@@ -169,12 +169,48 @@
     }
 
     #cameraContainer {
+      position: relative;
+      display: inline-block;
       background: linear-gradient(to bottom, #000080 0%, #1084d7 100%);
       padding: 12px;
       border: 2px solid;
       border-color: #dfdfdf #808080 #808080 #dfdfdf;
       margin-top: 12px;
       box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.3);
+    }
+
+    #scanGuide {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: calc(min(88%, 520px) - 24px);
+      max-width: calc(100% - 24px);
+      aspect-ratio: 2.6 / 1;
+      transform: translate(-50%, -50%);
+      border: 3px solid #ffffff;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+
+    #scanGuide::before,
+    #scanGuide::after {
+      content: '';
+      position: absolute;
+      top: -3px;
+      bottom: -3px;
+      width: 18px;
+      border-top: 3px solid #000;
+      border-bottom: 3px solid #000;
+    }
+
+    #scanGuide::before {
+      left: -3px;
+      border-left: 3px solid #000;
+    }
+
+    #scanGuide::after {
+      right: -3px;
+      border-right: 3px solid #000;
     }
 
     .form-group {
@@ -331,6 +367,7 @@
 
   <div id="cameraContainer" style="display:none;">
     <video id="cameraFeed"></video>
+    <div id="scanGuide"></div>
     <canvas id="scanCanvas" style="display:none;"></canvas>
   </div>
 
@@ -347,182 +384,482 @@
   </div>
 
   <script>
-    function textToBinary(text, bitsPerChar = 8) {
-      const arr = [];
-      for (let i = 0; i < text.length; i++) {
-        const code = text.charCodeAt(i);
-        let b = code.toString(2);
-        if (b.length > bitsPerChar) b = b.slice(-bitsPerChar);
-        else b = b.padStart(bitsPerChar, '0');
-        arr.push(b);
+    const PACKET_MAGIC = [0x42, 0x57];
+    const PACKET_VERSION = 1;
+    const HEADER_SIZE = 5;
+    const CRC_SIZE = 2;
+    const MIN_PACKET_SIZE = HEADER_SIZE + CRC_SIZE;
+    const DATA_COLS = 25;
+    const PATTERN_CELL_SIZE = 24;
+    const QUIET_ZONE_CELLS = 2;
+    const FRAME_CELLS = 1;
+    const SYNC_ROW_CELLS = 1;
+    const SYNC_COL_CELLS = 1;
+    const SCAN_ZONE_FILL = 0.84;
+    const DEFAULT_SCAN_ZONE_ASPECT_RATIO = 4.5;
+    let videoStream = null;
+    let currentPatternAspectRatio = DEFAULT_SCAN_ZONE_ASPECT_RATIO;
+
+    function bytesToBinary(bytes) {
+      return Array.from(bytes, byte => byte.toString(2).padStart(8, '0')).join('');
+    }
+
+    function binaryToBytes(binary) {
+      const bytes = [];
+      for (let i = 0; i + 8 <= binary.length; i += 8) {
+        bytes.push(Number.parseInt(binary.slice(i, i + 8), 2));
       }
-      return arr.join('');
+      return bytes;
     }
 
-    function chunkString(str, size) {
-      const chunks = [];
-      for (let i = 0; i < str.length; i += size) chunks.push(str.slice(i, i + size));
-      return chunks;
+    function crc16Ccitt(bytes) {
+      let crc = 0xffff;
+      for (const byte of bytes) {
+        crc ^= byte << 8;
+        for (let i = 0; i < 8; i++) {
+          if (crc & 0x8000) {
+            crc = (crc << 1) ^ 0x1021;
+          } else {
+            crc <<= 1;
+          }
+          crc &= 0xffff;
+        }
+      }
+      return crc;
     }
 
-    function renderBinaryGrid(binary, cols, cellSize, invert=false) {
-      const rows = Math.ceil(binary.length / cols);
+    function buildPacket(text) {
+      const payload = Array.from(new TextEncoder().encode(text));
+      if (payload.length > 0xffff) {
+        throw new Error('Message is too long to encode.');
+      }
+
+      const packet = [
+        ...PACKET_MAGIC,
+        PACKET_VERSION,
+        (payload.length >> 8) & 0xff,
+        payload.length & 0xff,
+        ...payload
+      ];
+      const crc = crc16Ccitt(packet);
+      packet.push((crc >> 8) & 0xff, crc & 0xff);
+      return packet;
+    }
+
+    function textToBinary(text) {
+      return bytesToBinary(buildPacket(text));
+    }
+
+    function buildPatternMatrix(binary, cols) {
+      const payloadRows = Math.max(1, Math.ceil(binary.length / cols));
+      const contentCols = cols + SYNC_COL_CELLS;
+      const contentRows = payloadRows + SYNC_ROW_CELLS;
+      const framedCols = contentCols + (FRAME_CELLS * 2);
+      const framedRows = contentRows + (FRAME_CELLS * 2);
+      const totalCols = framedCols + (QUIET_ZONE_CELLS * 2);
+      const totalRows = framedRows + (QUIET_ZONE_CELLS * 2);
+      const matrix = Array.from({ length: totalRows }, () => new Array(totalCols).fill('0'));
+
+      const frameTop = QUIET_ZONE_CELLS;
+      const frameLeft = QUIET_ZONE_CELLS;
+      const frameBottom = frameTop + framedRows - 1;
+      const frameRight = frameLeft + framedCols - 1;
+
+      for (let row = frameTop; row <= frameBottom; row++) {
+        for (let col = frameLeft; col <= frameRight; col++) {
+          if (row === frameTop || row === frameBottom || col === frameLeft || col === frameRight) {
+            matrix[row][col] = '1';
+          }
+        }
+      }
+
+      const syncRow = QUIET_ZONE_CELLS + FRAME_CELLS;
+      const syncCol = QUIET_ZONE_CELLS + FRAME_CELLS;
+      for (let col = syncCol; col < syncCol + contentCols; col++) {
+        matrix[syncRow][col] = (col - syncCol) % 2 === 0 ? '1' : '0';
+      }
+      for (let row = syncRow; row < syncRow + contentRows; row++) {
+        matrix[row][syncCol] = (row - syncRow) % 2 === 0 ? '1' : '0';
+      }
+
+      for (let i = 0; i < binary.length; i++) {
+        const row = QUIET_ZONE_CELLS + FRAME_CELLS + SYNC_ROW_CELLS + Math.floor(i / cols);
+        const col = QUIET_ZONE_CELLS + FRAME_CELLS + SYNC_COL_CELLS + (i % cols);
+        matrix[row][col] = binary[i];
+      }
+
+      return { matrix, totalCols, totalRows };
+    }
+
+    function renderBinaryGrid(binary, cols, cellSize, invert = false) {
+      const { matrix, totalCols, totalRows } = buildPatternMatrix(binary, cols);
       const canvas = document.getElementById('pattern');
-      canvas.width = cols * cellSize;
-      
-      // Add minimum height on desktop view (> 768px)
-      let canvasHeight = rows * cellSize;
+      currentPatternAspectRatio = totalCols / totalRows;
+      updateScanGuide();
+      canvas.width = totalCols * cellSize;
+
+      let canvasHeight = totalRows * cellSize;
       if (window.innerWidth > 768) {
         canvasHeight = Math.max(canvasHeight, 300);
       }
       canvas.height = canvasHeight;
-      const ctx = canvas.getContext('2d');
 
-      // Fill background white (or black if invert)
-      ctx.fillStyle = invert ? '#fff' : '#fff';
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      for (let i = 0; i < binary.length; i++) {
-        const bit = binary[i];
-        const x = (i % cols) * cellSize;
-        const y = Math.floor(i / cols) * cellSize;
-        const on = bit === '1';
-        // If invert checked, flip color mapping
-        ctx.fillStyle = (on ^ invert) ? '#000' : '#fff';
-        ctx.fillRect(x, y, cellSize, cellSize);
+      for (let row = 0; row < matrix.length; row++) {
+        for (let col = 0; col < matrix[row].length; col++) {
+          const on = matrix[row][col] === '1';
+          ctx.fillStyle = (on ^ invert) ? '#000' : '#fff';
+          ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+        }
       }
     }
 
-    document.getElementById('gen').addEventListener('click', () => {
-      const msg = document.getElementById('message').value;
-      const cell = 16; // Fixed to 16px
-      const bits = 8; // Fixed to 8 bits
-      const cols = 50; // Fixed to 50 columns
+    function decodePacket(binary) {
+      let lastError = 'No valid packet found in the scanned pattern.';
 
-      const binary = textToBinary(msg, bits);
-      renderBinaryGrid(binary, cols, cell, false);
-    });
+      for (let bitOffset = 0; bitOffset < 8; bitOffset++) {
+        const bytes = binaryToBytes(binary.slice(bitOffset));
 
-    // Re-generate on window resize to adapt to viewport changes
-    window.addEventListener('resize', () => {
-      const msg = document.getElementById('message').value;
-      const cell = 16; // Fixed to 16px
-      const bits = 8; // Fixed to 8 bits
-      const cols = 50; // Fixed to 50 columns
-
-      const binary = textToBinary(msg, bits);
-      renderBinaryGrid(binary, cols, cell, false);
-    });
-
-    document.getElementById('download').addEventListener('click', () => {
-      const canvas = document.getElementById('pattern');
-      const url = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'weave.png';
-      a.click();
-    });
-
-    // auto-generate initial
-    document.getElementById('gen').click();
-
-    // ==================== SCANNER SECTION ====================
-    let videoStream = null;
-
-    function binaryToText(binary, bitsPerChar = 8) {
-      const text = [];
-      for (let i = 0; i < binary.length; i += bitsPerChar) {
-        const chunk = binary.slice(i, i + bitsPerChar);
-        if (chunk.length === bitsPerChar) {
-          const code = parseInt(chunk, 2);
-          if (code >= 0 && code <= 127) {
-            text.push(String.fromCharCode(code));
+        for (let i = 0; i <= bytes.length - MIN_PACKET_SIZE; i++) {
+          if (bytes[i] !== PACKET_MAGIC[0] || bytes[i + 1] !== PACKET_MAGIC[1]) {
+            continue;
           }
+
+          const version = bytes[i + 2];
+          if (version !== PACKET_VERSION) {
+            lastError = 'Unsupported pattern version.';
+            continue;
+          }
+
+          const payloadLength = (bytes[i + 3] << 8) | bytes[i + 4];
+          const packetLength = HEADER_SIZE + payloadLength + CRC_SIZE;
+          if (i + packetLength > bytes.length) {
+            lastError = 'Scanned pattern is incomplete.';
+            continue;
+          }
+
+          const packet = bytes.slice(i, i + packetLength);
+          const expectedCrc = (packet[packet.length - 2] << 8) | packet[packet.length - 1];
+          const actualCrc = crc16Ccitt(packet.slice(0, -CRC_SIZE));
+          if (expectedCrc !== actualCrc) {
+            lastError = 'Pattern checksum failed. Please try a clearer scan.';
+            continue;
+          }
+
+          return {
+            ok: true,
+            payload: Uint8Array.from(packet.slice(HEADER_SIZE, -CRC_SIZE))
+          };
         }
       }
-      return text.join('');
+
+      return { ok: false, error: lastError };
     }
 
-    function extractBinaryFromImage(imageData, cellSize) {
-      const data = imageData.data;
-      const width = imageData.width;
-      const height = imageData.height;
-      const cellBrightnesses = [];
+    function binaryToText(binary) {
+      const packet = decodePacket(binary);
+      if (!packet.ok) {
+        return { text: '', error: packet.error };
+      }
 
-      // First pass: collect brightness values for all cells
-      for (let y = 0; y < height; y += cellSize) {
-        for (let x = 0; x < width; x += cellSize) {
-          // Get average brightness of cell
-          let brightness = 0;
-          let count = 0;
-          for (let dy = 0; dy < cellSize && y + dy < height; dy++) {
-            for (let dx = 0; dx < cellSize && x + dx < width; dx++) {
-              const idx = ((y + dy) * width + (x + dx)) * 4;
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
-              brightness += (r + g + b) / 3;
-              count++;
-            }
-          }
-          brightness /= count;
-          cellBrightnesses.push(brightness);
+      return {
+        text: new TextDecoder().decode(packet.payload),
+        error: ''
+      };
+    }
+
+    function getPixelBrightness(imageData, x, y) {
+      const clampedX = Math.max(0, Math.min(imageData.width - 1, Math.round(x)));
+      const clampedY = Math.max(0, Math.min(imageData.height - 1, Math.round(y)));
+      const idx = (clampedY * imageData.width + clampedX) * 4;
+      return (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3;
+    }
+
+    function getAverageBrightness(imageData, centerX, centerY, radiusX, radiusY) {
+      const samplePoints = 3;
+      let totalBrightness = 0;
+      let sampleCount = 0;
+
+      for (let yIndex = 0; yIndex < samplePoints; yIndex++) {
+        const yOffset = ((yIndex / (samplePoints - 1)) - 0.5) * 2 * radiusY;
+        for (let xIndex = 0; xIndex < samplePoints; xIndex++) {
+          const xOffset = ((xIndex / (samplePoints - 1)) - 0.5) * 2 * radiusX;
+          totalBrightness += getPixelBrightness(imageData, centerX + xOffset, centerY + yOffset);
+          sampleCount++;
         }
       }
 
-      // Calculate adaptive threshold using median and quartiles for better contrast
-      cellBrightnesses.sort((a, b) => a - b);
-      const mid = Math.floor(cellBrightnesses.length / 2);
-      const threshold = cellBrightnesses[mid];
+      return sampleCount === 0 ? 255 : totalBrightness / sampleCount;
+    }
 
-      // Second pass: convert to binary using adaptive threshold
-      const binary = [];
-      for (let y = 0; y < height; y += cellSize) {
-        for (let x = 0; x < width; x += cellSize) {
-          let brightness = 0;
-          let count = 0;
-          for (let dy = 0; dy < cellSize && y + dy < height; dy++) {
-            for (let dx = 0; dx < cellSize && x + dx < width; dx++) {
-              const idx = ((y + dy) * width + (x + dx)) * 4;
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
-              brightness += (r + g + b) / 3;
-              count++;
-            }
-          }
-          brightness /= count;
-          // Use adaptive threshold for better detection
-          binary.push(brightness < threshold ? '1' : '0');
+    function estimateThreshold(imageData) {
+      const samples = [];
+      const step = Math.max(2, Math.floor(Math.min(imageData.width, imageData.height) / 80));
+
+      for (let y = 0; y < imageData.height; y += step) {
+        for (let x = 0; x < imageData.width; x += step) {
+          samples.push(getPixelBrightness(imageData, x, y));
         }
       }
-      return binary.join('');
+
+      samples.sort((a, b) => a - b);
+      const low = samples[Math.floor(samples.length * 0.1)] ?? 0;
+      const high = samples[Math.floor(samples.length * 0.9)] ?? 255;
+      return (low + high) / 2;
+    }
+
+    function findRatioBounds(ratios, minRatio) {
+      const startIndex = ratios.findIndex(ratio => ratio >= minRatio);
+      const endOffset = [...ratios].reverse().findIndex(ratio => ratio >= minRatio);
+
+      if (startIndex < 0 || endOffset < 0) {
+        return null;
+      }
+
+      const endIndex = ratios.length - 1 - endOffset;
+      if (endIndex <= startIndex) {
+        return null;
+      }
+
+      return { startIndex, endIndex };
+    }
+
+    function sampleDarkRatios(imageData, threshold, primaryStart, primaryEnd, secondaryStart, secondaryEnd, vertical) {
+      const secondaryStep = vertical
+        ? Math.max(1, Math.floor(imageData.height / 120))
+        : Math.max(1, Math.floor(imageData.width / 180));
+      const ratios = [];
+
+      for (let primary = primaryStart; primary < primaryEnd; primary++) {
+        let darkCount = 0;
+        let totalCount = 0;
+
+        for (let secondary = secondaryStart; secondary < secondaryEnd; secondary += secondaryStep) {
+          const x = vertical ? primary : secondary;
+          const y = vertical ? secondary : primary;
+          if (getPixelBrightness(imageData, x, y) < threshold) {
+            darkCount++;
+          }
+          totalCount++;
+        }
+
+        ratios.push(totalCount === 0 ? 0 : darkCount / totalCount);
+      }
+
+      return ratios;
+    }
+
+    function findDarkBounds(imageData, threshold) {
+      const xStart = Math.floor(imageData.width * 0.08);
+      const xEnd = Math.ceil(imageData.width * 0.92);
+      const yStart = Math.floor(imageData.height * 0.08);
+      const yEnd = Math.ceil(imageData.height * 0.92);
+      const rowRatios = sampleDarkRatios(imageData, threshold, yStart, yEnd, xStart, xEnd, false);
+      const rowBounds = findRatioBounds(rowRatios, 0.55);
+      if (!rowBounds) {
+        return null;
+      }
+
+      const top = yStart + rowBounds.startIndex;
+      const bottom = yStart + rowBounds.endIndex;
+      const colRatios = sampleDarkRatios(imageData, threshold, xStart, xEnd, top, bottom + 1, true);
+      const colBounds = findRatioBounds(colRatios, 0.55);
+      if (!colBounds) {
+        return null;
+      }
+
+      return {
+        left: xStart + colBounds.startIndex,
+        top,
+        width: (colBounds.endIndex - colBounds.startIndex) + 1,
+        height: (rowBounds.endIndex - rowBounds.startIndex) + 1
+      };
+    }
+
+    function extractBinaryCandidate(imageData, config, xOffset, yOffset) {
+      const sample = {
+        radiusX: Math.max(1, config.cellWidth * 0.22),
+        radiusY: Math.max(1, config.cellHeight * 0.22),
+        xOffset,
+        yOffset
+      };
+      const syncResult = readSyncPattern(imageData, config, sample);
+      const payloadBits = readPayloadBits(imageData, config, sample);
+
+      return {
+        binary: payloadBits.join(''),
+        syncScore: syncResult.syncChecks === 0 ? 0 : syncResult.syncMatches / syncResult.syncChecks
+      };
+    }
+
+    function readCellBit(imageData, config, sample, col, row) {
+      const sampleX = config.bounds.left + ((col + 0.5 + sample.xOffset) * config.cellWidth);
+      const sampleY = config.bounds.top + ((row + 0.5 + sample.yOffset) * config.cellHeight);
+      const brightness = getAverageBrightness(imageData, sampleX, sampleY, sample.radiusX, sample.radiusY);
+      return brightness < config.threshold ? '1' : '0';
+    }
+
+    function readSyncPattern(imageData, config, sample) {
+      const framedCols = config.cols + SYNC_COL_CELLS + (FRAME_CELLS * 2);
+      let syncMatches = 0;
+      let syncChecks = 0;
+
+      for (let col = FRAME_CELLS; col < framedCols - FRAME_CELLS; col++) {
+        const bit = readCellBit(imageData, config, sample, col, FRAME_CELLS);
+        const expectedBit = (col - FRAME_CELLS) % 2 === 0 ? '1' : '0';
+        if (bit === expectedBit) {
+          syncMatches++;
+        }
+        syncChecks++;
+      }
+
+      for (let row = FRAME_CELLS; row < config.framedRows - FRAME_CELLS; row++) {
+        const bit = readCellBit(imageData, config, sample, FRAME_CELLS, row);
+        const expectedBit = (row - FRAME_CELLS) % 2 === 0 ? '1' : '0';
+        if (bit === expectedBit) {
+          syncMatches++;
+        }
+        syncChecks++;
+      }
+
+      return { syncMatches, syncChecks };
+    }
+
+    function readPayloadBits(imageData, config, sample) {
+      const framedCols = config.cols + SYNC_COL_CELLS + (FRAME_CELLS * 2);
+      const payloadBits = [];
+
+      for (let row = FRAME_CELLS + SYNC_ROW_CELLS; row < config.framedRows - FRAME_CELLS; row++) {
+        for (let col = FRAME_CELLS + SYNC_COL_CELLS; col < framedCols - FRAME_CELLS; col++) {
+          payloadBits.push(readCellBit(imageData, config, sample, col, row));
+        }
+      }
+
+      return payloadBits;
+    }
+
+    function extractBinaryFromImage(imageData, cols) {
+      const threshold = estimateThreshold(imageData);
+      const bounds = findDarkBounds(imageData, threshold);
+      if (!bounds) {
+        return '';
+      }
+
+      const framedCols = cols + SYNC_COL_CELLS + (FRAME_CELLS * 2);
+      const cellWidth = bounds.width / framedCols;
+      if (!Number.isFinite(cellWidth) || cellWidth < 1) {
+        return '';
+      }
+
+      const framedRows = Math.max((FRAME_CELLS * 2) + SYNC_ROW_CELLS + 1, Math.round(bounds.height / cellWidth));
+      const cellHeight = bounds.height / framedRows;
+      const offsets = [-0.35, -0.18, 0, 0.18, 0.35];
+      const extractionConfig = { bounds, cols, framedRows, cellWidth, cellHeight, threshold };
+      let fallbackBinary = '';
+      let bestCandidate = { binary: '', syncScore: -1 };
+
+      for (const yOffset of [-0.18, 0, 0.18]) {
+        for (const xOffset of offsets) {
+          const candidate = extractBinaryCandidate(imageData, extractionConfig, xOffset, yOffset);
+
+          if (!fallbackBinary) {
+            fallbackBinary = candidate.binary;
+          }
+
+          if (candidate.syncScore > bestCandidate.syncScore) {
+            bestCandidate = candidate;
+          }
+
+          if (decodePacket(candidate.binary).ok) {
+            return candidate.binary;
+          }
+        }
+      }
+
+      return bestCandidate.binary || fallbackBinary;
+    }
+
+    function showDecodedResult(binary) {
+      const scanBinary = document.getElementById('scannedBinary');
+      const decodedText = document.getElementById('decodedText');
+      const resultsGroup = document.getElementById('resultsGroup');
+      const decoded = binaryToText(binary);
+
+      scanBinary.value = binary;
+      decodedText.value = decoded.text || decoded.error;
+      resultsGroup.style.display = 'block';
+    }
+
+    function showScanFailure(message) {
+      const scanBinary = document.getElementById('scannedBinary');
+      const decodedText = document.getElementById('decodedText');
+      const resultsGroup = document.getElementById('resultsGroup');
+
+      scanBinary.value = '';
+      decodedText.value = message;
+      resultsGroup.style.display = 'block';
+    }
+
+    function generatePattern() {
+      const msg = document.getElementById('message').value;
+      const binary = textToBinary(msg);
+      renderBinaryGrid(binary, DATA_COLS, PATTERN_CELL_SIZE, false);
+    }
+
+    function updateScanGuide() {
+      const scanGuide = document.getElementById('scanGuide');
+      scanGuide.style.aspectRatio = `${currentPatternAspectRatio} / 1`;
+    }
+
+    function getCenteredScanRect(width, height) {
+      const scanAspectRatio = currentPatternAspectRatio || DEFAULT_SCAN_ZONE_ASPECT_RATIO;
+      let zoneWidth = width * SCAN_ZONE_FILL;
+      let zoneHeight = zoneWidth / scanAspectRatio;
+
+      if (zoneHeight > height * SCAN_ZONE_FILL) {
+        zoneHeight = height * SCAN_ZONE_FILL;
+        zoneWidth = zoneHeight * scanAspectRatio;
+      }
+
+      return {
+        x: Math.round((width - zoneWidth) / 2),
+        y: Math.round((height - zoneHeight) / 2),
+        width: Math.round(zoneWidth),
+        height: Math.round(zoneHeight)
+      };
     }
 
     function processPhotoCapture() {
       const video = document.getElementById('cameraFeed');
       const canvas = document.getElementById('scanCanvas');
       const ctx = canvas.getContext('2d');
-      const scanBinary = document.getElementById('scannedBinary');
-      const decodedText = document.getElementById('decodedText');
-      const resultsGroup = document.getElementById('resultsGroup');
-      const bits = 8; // Fixed to 8 bits
-      const cellSize = 16; // Fixed to 16px
+      const scanRect = getCenteredScanRect(video.videoWidth, video.videoHeight);
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
+      canvas.width = scanRect.width;
+      canvas.height = scanRect.height;
+      ctx.drawImage(
+        video,
+        scanRect.x,
+        scanRect.y,
+        scanRect.width,
+        scanRect.height,
+        0,
+        0,
+        scanRect.width,
+        scanRect.height
+      );
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const extracted = extractBinaryFromImage(imageData, cellSize);
-      
+      const extracted = extractBinaryFromImage(imageData, DATA_COLS);
+
       if (extracted.length > 0) {
-        scanBinary.value = extracted;
-        const decoded = binaryToText(extracted, bits);
-        decodedText.value = decoded || '(no valid text found)';
-        resultsGroup.style.display = 'block';
+        showDecodedResult(extracted);
+      } else {
+        showScanFailure('No framed pattern detected. Please try a clearer scan.');
       }
 
-      // Automatically stop camera after capture
       stopCameraStream();
     }
 
@@ -543,6 +880,43 @@
       captureBtn.style.display = 'none';
     }
 
+    function processUploadedImage(file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.getElementById('scanCanvas');
+          const ctx = canvas.getContext('2d');
+
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const extracted = extractBinaryFromImage(imageData, DATA_COLS);
+
+          if (extracted.length > 0) {
+            showDecodedResult(extracted);
+          } else {
+            showScanFailure('No framed pattern detected. Please try a clearer image.');
+          }
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    document.getElementById('gen').addEventListener('click', generatePattern);
+    window.addEventListener('resize', generatePattern);
+
+    document.getElementById('download').addEventListener('click', () => {
+      const canvas = document.getElementById('pattern');
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'weave.png';
+      a.click();
+    });
+
     document.getElementById('startCamera').addEventListener('click', async () => {
       const cameraContainer = document.getElementById('cameraContainer');
       const video = document.getElementById('cameraFeed');
@@ -555,7 +929,7 @@
         });
         video.srcObject = videoStream;
         video.play();
-        cameraContainer.style.display = 'block';
+        cameraContainer.style.display = 'inline-block';
         startBtn.style.display = 'none';
         captureBtn.style.display = 'inline-block';
       } catch (err) {
@@ -566,39 +940,6 @@
     document.getElementById('captureAndStop').addEventListener('click', () => {
       processPhotoCapture();
     });
-
-    function processUploadedImage(file) {
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const img = new Image();
-        img.onload = function() {
-          const canvas = document.getElementById('scanCanvas');
-          const ctx = canvas.getContext('2d');
-          const scanBinary = document.getElementById('scannedBinary');
-          const decodedText = document.getElementById('decodedText');
-          const resultsGroup = document.getElementById('resultsGroup');
-          const bits = 8; // Fixed to 8 bits
-          const cellSize = 16; // Fixed to 16px
-
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const extracted = extractBinaryFromImage(imageData, cellSize);
-          
-          if (extracted.length > 0) {
-            scanBinary.value = extracted;
-            const decoded = binaryToText(extracted, bits);
-            decodedText.value = decoded || '(no valid text found)';
-            resultsGroup.style.display = 'block';
-          } else {
-            alert('No pattern detected. Please try a clearer image.');
-          }
-        };
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
 
     document.getElementById('imageUpload').addEventListener('change', function(event) {
       const file = event.target.files[0];
@@ -615,6 +956,8 @@
         alert('Please select an image first.');
       }
     });
+
+    generatePattern();
   </script>
 </body>
 </html>
